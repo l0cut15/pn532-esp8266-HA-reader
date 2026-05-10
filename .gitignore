@@ -1,0 +1,6 @@
+secrets.yaml
+.esphome/
+*.bin
+*.elf
+.DS_Store
+.claude/
