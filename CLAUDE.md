@@ -18,7 +18,7 @@ The firmware uses a **local fork of the ESPHome PN532 driver** (`components/`) t
 | PN532 VCC | **5V** (measured 4.68 V; the module has its own regulator) |
 | WS2812 status LED | D8 |
 
-Enclosure: 3D-printed PLA, 3 mm cover, about 4 mm air gap above the PN532. **Known issue:** this PN532 module has a narrow sweet spot and dead zones, even with a card-sized tag on the bare antenna. That hardware problem is the main cause of unreliable reads (see `components/README.md`).
+Enclosure: 3D-printed PLA, 3 mm cover, about 4 mm air gap above the PN532 (~7 mm in total). **Known issue:** a credit-card-sized tag that close is *overcoupled* and reads unreliably. At about 5–6 cm it reads well. Design the enclosure so the tap surface sits several cm above the antenna for card tags (see `components/README.md`).
 
 ## Build / Flash / Logs
 

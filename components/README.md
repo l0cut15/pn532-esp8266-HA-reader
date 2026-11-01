@@ -24,5 +24,10 @@ write/clean/read modes, `pn532.is_writing`), and every new option defaults to up
 
 ## Notes from the 2026-11-01 investigation
 - The PN532 keeps RFConfiguration across ESP reboots and OTA, because it is not power-cycled. The driver now always writes MaxRetries at setup. After testing `rx_gain`, power-cycle the board to get back to chip defaults.
-- Root cause of the unreliable reads is **hardware**. The red "PN532 NFC RFID Module V3" in this build has a narrow sweet spot and dead zones, even with a credit-card tag flat on the bare antenna. The bench measured 0 detections in 60 s at some positions, and 49/60 clean reads at a good one. The enclosure (3 mm PLA + 4 mm gap) tips marginal positions into failure. Suspects: a poorly tuned clone antenna, and the D1 Mini and WS2812 sitting right next to the coil.
+- Root cause of the unreliable reads was **geometry, not the module**: a credit-card tag held close to the antenna is
+  overcoupled. Both coils detune, and longer replies fail with CRC/RF-protocol errors (status 0x02/0x0B); at times
+  even detection fails. Flat on the bare antenna gave 0 detections in 60 s. At about 5–6 cm the same card reads
+  reliably, which is within the red V3 module's 5–7 cm spec. The original enclosure (3 mm PLA + 4 mm gap, so
+  ~7 mm) puts card taps in the too-close zone. Small stickers and fobs couple more weakly and will want a shorter
+  distance.
 - Bench workflow: `esphome -s bench_mode true run nfc-reader.yaml`, tape the tag in place, then read the `BENCH` lines from the serial log.
