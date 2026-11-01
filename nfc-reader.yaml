@@ -22,7 +22,7 @@ esphome:
 esp8266:
   board: d1_mini
 
-# Local fork of the PN532 driver (see components/README.md)
+# Fork of the PN532 driver (see components/README.md)
 external_components:
   - source:
       type: local
@@ -94,8 +94,8 @@ pn532_i2c:
   id: pn532_board
   # Reliability tuning (options added by the local fork in components/pn532)
   update_interval: 250ms     # poll 4x/s so short taps and quick re-taps are seen
-  # rx_gain: 48dB            # disabled: suspected of breaking detection (bisecting)
-  # activation_retries: 3   # disabled: short activation window never finds the tag (bisecting)
+  # rx_gain: 48dB            # untested in isolation; see components/README.md
+  # activation_retries: 3   # do not use: short activation window never found the tag
   removal_misses: 3          # ~750ms of empty polls before a tag counts as removed
   read_attempts: 4           # re-read a held tag on up to 4 polls before reporting it unreadable
   page_retries: 3            # re-select + retry a failed page read within one poll
