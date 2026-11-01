@@ -5,3 +5,4 @@ secrets.yaml
 .DS_Store
 .claude/
 .venv/
+__pycache__/
