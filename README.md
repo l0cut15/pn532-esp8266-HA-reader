@@ -21,18 +21,18 @@ ESPHome firmware for a **Wemos D1 Mini** (ESP8266) with a PN532 NFC module. Scan
 
 Set PN532 DIP switches: **switch 1 ON, switch 2 OFF** (I2C mode).
 
+| NeoPixel | D1 Mini |
+|----------|---------|
+| DIN | D8 (GPIO15) |
+| VCC | 5V |
+| GND | GND |
+
 ### Reading distance
 
 A credit-card-sized tag reads reliably at about **5 cm** above the antenna. Held much closer (for example on a cover
 a few mm above the module), the card overcouples with the antenna and reads become unreliable. Design the enclosure
 so the tap surface sits roughly 4–5 cm above the PN532. Small stickers and key fobs couple more weakly and need to be
 closer.
-
-| NeoPixel | D1 Mini |
-|----------|---------|
-| DIN | D8 (GPIO15) |
-| VCC | 5V |
-| GND | GND |
 
 ## Setup
 
