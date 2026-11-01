@@ -141,10 +141,8 @@ void PN532::fire_removed_() {
 }
 
 bool PN532::reactivate_(const nfc::NfcTagUid &uid) {
-  // Power-cycle the tag: after an RF error it may sit in HALT, where it ignores the REQA that InListPassiveTarget
-  // sends. Dropping the field for a few ms resets it to IDLE so the re-select answers on the first try.
-  this->turn_off_rf_();
-  delay(5);
+  // Note: dropping the RF field before re-selecting was tried and made re-selects fail far more often (2/26 ok vs
+  // ~50%), so re-select with the field left on.
   if (!this->write_command_({PN532_COMMAND_INLISTPASSIVETARGET, 0x01, 0x00}))
     return false;
   PN532Frame read;
@@ -190,9 +188,11 @@ void PN532::update() {
   const uint32_t now = millis();
   if (now - this->stat_last_log_ >= 10000) {
     this->stat_last_log_ = now;
-    ESP_LOGI(TAG, "stats: polls=%u empty=%u poll_errors=%u read_failures=%u page_retries=%u busy_skips=%u",
+    ESP_LOGI(TAG,
+             "stats: polls=%u empty=%u poll_errors=%u read_failures=%u page_retries=%u abandoned=%u busy_skips=%u "
+             "stale_frames=%u",
              this->stat_polls_, this->stat_empty_, this->stat_poll_errors_, this->stat_read_failures_,
-             this->stat_page_retries_, this->stat_busy_skips_);
+             this->stat_page_retries_, this->stat_abandoned_, this->stat_busy_skips_, this->stat_stale_frames_);
   }
   if (this->requested_read_) {
     // previous InListPassiveTarget still outstanding
@@ -247,6 +247,19 @@ void PN532::loop() {
       this->miss_count_++;
     if (this->miss_count_ >= this->removal_misses_) {
       this->fire_removed_();
+      if (!this->pending_uid_.empty() && this->pending_attempts_ > 0) {
+        // The tag left before any read succeeded. Report it (without NDEF) rather than failing silently, so the
+        // automation can signal "tap again".
+        this->stat_abandoned_++;
+        char uid_buf[nfc::FORMAT_UID_BUFFER_SIZE];
+        ESP_LOGW(TAG, "Tag '%s' removed after %u failed read(s); reporting without NDEF",
+                 nfc::format_uid_to(uid_buf, this->pending_uid_), this->pending_attempts_);
+#ifdef PN532_ON_TAG_TRIGGER_COUNT
+        auto tag = make_unique<nfc::NfcTag>(this->pending_uid_, nfc::NFC_FORUM_TYPE_2);
+        for (auto *trigger : this->triggers_ontag_)
+          trigger->process(tag);
+#endif
+      }
       this->pending_uid_ = {};
       this->pending_attempts_ = 0;
     }
@@ -290,6 +303,34 @@ void PN532::loop() {
     }
   }
 #endif
+
+  if (this->bench_mode_) {
+    // Fixed-tag bench: every poll is an independent trial (the RF field is turned off after each one, which
+    // power-cycles the tag), so no presence tracking and no triggers.
+    this->bench_detect_++;
+    const uint32_t retries_before = this->stat_page_retries_;
+    this->last_read_failed_ = false;
+    if (tag_type == nfc::TAG_TYPE_2) {
+      this->read_tag_(nfcid, tag_type);
+    } else {
+      ESP_LOGW(TAG, "bench: tag type %u not supported", tag_type);
+      this->last_read_failed_ = true;
+    }
+    if (this->last_read_failed_) {
+      this->bench_failed_++;
+    } else if (this->stat_page_retries_ != retries_before) {
+      this->bench_recovered_++;
+    } else {
+      this->bench_clean_++;
+    }
+    const uint32_t trials = this->bench_clean_ + this->bench_recovered_ + this->bench_failed_;
+    if (trials % 20 == 0) {
+      ESP_LOGI(TAG, "BENCH polls=%u detected=%u trials=%u clean=%u recovered=%u failed=%u", this->stat_polls_,
+               this->bench_detect_, trials, this->bench_clean_, this->bench_recovered_, this->bench_failed_);
+    }
+    this->turn_off_rf_();
+    return;
+  }
 
   if (same_uid_(nfcid, this->current_uid_)) {
     // already handled and still present
@@ -382,6 +423,18 @@ bool PN532::write_command_(const std::span<const uint8_t> data) {
   if (data.size() > PN532_FRAME_MAX_DATA_SIZE) {
     return false;
   }
+  // Resync: if the PN532 still holds an unread frame from an earlier command, a new command's ACK/response would be
+  // read out of step. Drain it first (bounded) and report it.
+  for (uint8_t i = 0; i < 3 && this->is_read_ready(); i++) {
+    PN532Frame stale;
+    this->stat_stale_frames_++;
+    if (this->read_data(stale, 16) && stale.size() >= 9) {
+      ESP_LOGW(TAG, "Drained stale frame before cmd 0x%02X: %02X %02X %02X %02X %02X %02X %02X %02X", data[0],
+               stale[1], stale[2], stale[3], stale[4], stale[5], stale[6], stale[7], stale[8]);
+    } else {
+      ESP_LOGW(TAG, "Drained unreadable stale frame before cmd 0x%02X", data[0]);
+    }
+  }
   PN532Frame frame;
   // Preamble
   frame.push_back(0x00);
@@ -431,6 +484,10 @@ bool PN532::read_ack_() {
                   data[3] == 0xFF && data[4] == 0x00 &&  // ACK packet code
                   data[5] == 0xFF && data[6] == 0x00);   // postamble
   ESP_LOGV(TAG, "ACK valid: %s", YESNO(matches));
+  if (!matches) {
+    ESP_LOGW(TAG, "Expected ACK, got %02X %02X %02X %02X %02X %02X", data[1], data[2], data[3], data[4], data[5],
+             data[6]);
+  }
   return matches;
 }
 
@@ -578,7 +635,8 @@ bool PN532::in_data_exchange_(const std::span<const uint8_t> command, PN532Frame
     return false;
   }
   if (response[0] != 0x00) {
-    ESP_LOGV(TAG, "InDataExchange failed, status 0x%02X", response[0]);
+    // 0x01 = RF timeout (tag didn't answer), 0x02 = CRC, 0x03 = parity, 0x0B = RF protocol error (UM0701-02, 7.1)
+    ESP_LOGD(TAG, "InDataExchange failed, status 0x%02X", response[0]);
     return false;
   }
   std::copy(response.begin() + 1, response.end(), response.begin());

@@ -1,6 +1,8 @@
 substitutions:
   name: nfc-reader
   friendly_name: NFC Reader
+  # Fixed-tag reliability bench (no HA events). Build with: esphome -s bench_mode true run nfc-reader.yaml
+  bench_mode: "false"
 
 esphome:
   name: $name
@@ -96,7 +98,8 @@ pn532_i2c:
   # activation_retries: 3   # disabled: short activation window never finds the tag (bisecting)
   removal_misses: 3          # ~750ms of empty polls before a tag counts as removed
   read_attempts: 4           # re-read a held tag on up to 4 polls before reporting it unreadable
-  page_retries: 2            # re-select + retry a failed page read within one poll
+  page_retries: 3            # re-select + retry a failed page read within one poll
+  bench_mode: ${bench_mode}
   on_tag:
     then:
       - lambda: |-

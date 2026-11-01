@@ -98,6 +98,9 @@ class PN532 : public PollingComponent {
   void set_read_attempts(uint8_t n) { this->read_attempts_ = n; }
   /// per-page retries (with tag re-activation) inside a single read
   void set_page_retries(uint8_t n) { this->page_retries_ = n; }
+  /// bench mode: with a tag fixed in place, re-read it on every poll (RF field cycled in between) and log success
+  /// rates; no on_tag / on_tag_removed triggers fire
+  void set_bench_mode(bool b) { this->bench_mode_ = b; }
 
   void read_mode();
   void clean_mode();
@@ -193,6 +196,14 @@ class PN532 : public PollingComponent {
   uint32_t stat_page_retries_{0};
   uint32_t stat_empty_{0};
   uint32_t stat_busy_skips_{0};
+  uint32_t stat_abandoned_{0};
+  uint32_t stat_stale_frames_{0};
+  // bench mode counters
+  uint32_t bench_detect_{0};      // polls where the tag was detected
+  uint32_t bench_clean_{0};       // full read OK without any page retry
+  uint32_t bench_recovered_{0};   // full read OK after page retries
+  uint32_t bench_failed_{0};      // full read failed even with retries
+  bool bench_mode_{false};
   uint32_t stat_last_log_{0};
   uint8_t rx_gain_{0xFF};
   uint8_t activation_retries_{0xFF};

@@ -21,6 +21,7 @@ CONF_ACTIVATION_RETRIES = "activation_retries"
 CONF_REMOVAL_MISSES = "removal_misses"
 CONF_READ_ATTEMPTS = "read_attempts"
 CONF_PAGE_RETRIES = "page_retries"
+CONF_BENCH_MODE = "bench_mode"
 
 # CIU_RFCfg RxGain codes (PN512/PN532 CIU): 18/23 dB appear twice in the table; use the upper codes
 RX_GAIN_CODES = {"18dB": 2, "23dB": 3, "33dB": 4, "38dB": 5, "43dB": 6, "48dB": 7}
@@ -48,6 +49,7 @@ PN532_SCHEMA = cv.Schema(
         cv.Optional(CONF_REMOVAL_MISSES, default=1): cv.int_range(min=1, max=20),
         cv.Optional(CONF_READ_ATTEMPTS, default=1): cv.int_range(min=1, max=20),
         cv.Optional(CONF_PAGE_RETRIES, default=0): cv.int_range(min=0, max=5),
+        cv.Optional(CONF_BENCH_MODE, default=False): cv.boolean,
     }
 ).extend(cv.polling_component_schema("1s"))
 
@@ -82,6 +84,7 @@ async def setup_pn532(var: MockObj, config: ConfigType) -> None:
     cg.add(var.set_removal_misses(config[CONF_REMOVAL_MISSES]))
     cg.add(var.set_read_attempts(config[CONF_READ_ATTEMPTS]))
     cg.add(var.set_page_retries(config[CONF_PAGE_RETRIES]))
+    cg.add(var.set_bench_mode(config[CONF_BENCH_MODE]))
 
     for conf in config.get(CONF_ON_TAG, []):
         trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID])

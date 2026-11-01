@@ -56,7 +56,7 @@ bool PN532I2C::read_response(uint8_t command, pn532::PN532Frame &data) {
 
   if (data[1] != 0x00 || data[2] != 0x00 || data[3] != 0xFF) {
     // invalid packet
-    ESP_LOGV(TAG, "read data invalid preamble!");
+    ESP_LOGW(TAG, "read data invalid preamble!");
     return false;
   }
 
@@ -65,7 +65,9 @@ bool PN532I2C::read_response(uint8_t command, pn532::PN532Frame &data) {
                        data[7] == command + 1);                         // Correct command response
 
   if (!valid_header) {
-    ESP_LOGV(TAG, "read data invalid header!");
+    // A response for a different command means the host and PN532 are out of step (a stale frame was queued)
+    ESP_LOGW(TAG, "Response mismatch: expected cmd 0x%02X, got TFI 0x%02X cmd 0x%02X (len %u)", command + 1,
+             data[6], data[7], len);
     return false;
   }
 
@@ -78,12 +80,12 @@ bool PN532I2C::read_response(uint8_t command, pn532::PN532Frame &data) {
   checksum = ~checksum + 1;
 
   if (data[tfi_offset + len + 1] != checksum) {
-    ESP_LOGV(TAG, "read data invalid checksum! %02X != %02X", data[tfi_offset + len + 1], checksum);
+    ESP_LOGW(TAG, "read data invalid checksum! %02X != %02X", data[tfi_offset + len + 1], checksum);
     return false;
   }
 
   if (data[tfi_offset + len + 2] != 0x00) {
-    ESP_LOGV(TAG, "read data invalid postamble!");
+    ESP_LOGW(TAG, "read data invalid postamble!");
     return false;
   }
 
@@ -102,7 +104,7 @@ uint8_t PN532I2C::read_response_length_() {
 
   if (data[1] != 0x00 || data[2] != 0x00 || data[3] != 0xFF) {
     // invalid packet
-    ESP_LOGV(TAG, "read data invalid preamble!");
+    ESP_LOGW(TAG, "read data invalid preamble!");
     return 0;
   }
 
@@ -110,7 +112,7 @@ uint8_t PN532I2C::read_response_length_() {
                        data[6] == 0xD5);                                // TFI - frame from PN532 to system controller
 
   if (!valid_header) {
-    ESP_LOGV(TAG, "read data invalid header!");
+    ESP_LOGW(TAG, "Length frame invalid header: %02X %02X %02X", data[4], data[5], data[6]);
     return 0;
   }
 
