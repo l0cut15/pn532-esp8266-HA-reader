@@ -20,19 +20,15 @@ esphome:
 esp8266:
   board: d1_mini
 
+# Local fork of the PN532 driver (see components/README.md)
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [pn532, pn532_i2c]
+
 logger:
-  level: VERBOSE
-  logs:
-    # keep the NFC path verbose, quiet everything else back to DEBUG
-    wifi: DEBUG
-    api: DEBUG
-    api.service: DEBUG
-    sensor: DEBUG
-    text_sensor: DEBUG
-    light: DEBUG
-    component: DEBUG
-    scheduler: DEBUG
-    esphome.ota: DEBUG
+  level: DEBUG
 
 api:
   encryption:
@@ -94,6 +90,13 @@ globals:
 
 pn532_i2c:
   id: pn532_board
+  # Reliability tuning (options added by the local fork in components/pn532)
+  update_interval: 250ms     # poll 4x/s so short taps and quick re-taps are seen
+  rx_gain: 48dB              # max receiver gain (chip default 38dB)
+  activation_retries: 3      # "no card" answers in ms instead of waiting for an abort
+  removal_misses: 3          # ~750ms of empty polls before a tag counts as removed
+  read_attempts: 4           # re-read a held tag on up to 4 polls before reporting it unreadable
+  page_retries: 2            # re-select + retry a failed page read within one poll
   on_tag:
     then:
       - lambda: |-

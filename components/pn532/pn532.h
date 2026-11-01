@@ -87,6 +87,18 @@ class PN532 : public PollingComponent {
 
   bool is_writing() { return this->next_task_ != READ; };
 
+  // --- reliability tuning (local fork) ---
+  /// CIU_RFCfg RxGain code 0-7 (PN512 table: 4=33dB, 5=38dB (chip default), 6=43dB, 7=48dB); 0xFF = leave default
+  void set_rx_gain(uint8_t code) { this->rx_gain_ = code; }
+  /// MxRtyPassiveActivation: how many times InListPassiveTarget retries before reporting "no target" (0xFF = forever)
+  void set_activation_retries(uint8_t n) { this->activation_retries_ = n; }
+  /// consecutive empty/failed polls before a present tag is declared removed
+  void set_removal_misses(uint8_t n) { this->removal_misses_ = n; }
+  /// polls on which a held tag is re-read after a failed read before giving up and reporting it without NDEF
+  void set_read_attempts(uint8_t n) { this->read_attempts_ = n; }
+  /// per-page retries (with tag re-activation) inside a single read
+  void set_page_retries(uint8_t n) { this->page_retries_ = n; }
+
   void read_mode();
   void clean_mode();
   void format_mode();
@@ -95,6 +107,11 @@ class PN532 : public PollingComponent {
 
  protected:
   void turn_off_rf_();
+  bool configure_rf_();
+  /// blocking InListPassiveTarget; true if exactly `uid` answered (tag re-selected after an RF error)
+  bool reactivate_(const nfc::NfcTagUid &uid);
+  void fire_removed_();
+  static bool same_uid_(const nfc::NfcTagUid &a, const nfc::NfcTagUid &b);
   bool write_command_(std::span<const uint8_t> data);
   bool write_command_(std::initializer_list<uint8_t> data) {
     return this->write_command_(std::span<const uint8_t>(data.begin(), data.size()));
@@ -167,8 +184,22 @@ class PN532 : public PollingComponent {
   StaticVector<nfc::NfcOnTagTrigger *, PN532_ON_TAG_REMOVED_TRIGGER_COUNT> triggers_ontagremoved_;
 #endif
   std::unique_ptr<nfc::NdefMessage> next_task_message_to_write_;
-  nfc::NfcTagUid current_uid_;
+  nfc::NfcTagUid current_uid_;   // tag that has been handled (on_tag fired) and is still present
+  nfc::NfcTagUid pending_uid_;   // tag present whose read failed and is being retried
   uint32_t rd_start_time_{0};  // valid only while rd_started_ is set
+  uint32_t stat_polls_{0};
+  uint32_t stat_poll_errors_{0};
+  uint32_t stat_read_failures_{0};
+  uint32_t stat_page_retries_{0};
+  uint8_t rx_gain_{0xFF};
+  uint8_t activation_retries_{0xFF};
+  uint8_t removal_misses_{1};
+  uint8_t read_attempts_{1};
+  uint8_t page_retries_{0};
+  uint8_t miss_count_{0};
+  uint8_t pending_attempts_{0};
+  bool last_read_failed_{false};  // set by the tag readers on an RF/communication failure
+  const nfc::NfcTagUid *retry_uid_{nullptr};  // tag to re-select when a page read fails (null = no retries)
   PN532ReadReady rd_ready_{WOULDBLOCK};
   NfcTask next_task_{READ};
   PN532Error error_code_{NONE};

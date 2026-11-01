@@ -78,7 +78,81 @@ void PN532::setup() {
     return;
   }
 
+  if (!this->configure_rf_()) {
+    ESP_LOGW(TAG, "RF configuration failed; continuing with chip defaults");
+  }
+
   this->turn_off_rf_();
+}
+
+bool PN532::configure_rf_() {
+  PN532Frame response;
+  if (this->activation_retries_ != 0xFF) {
+    // CfgItem 0x05 MaxRetries: MxRtyATR, MxRtyPSL, MxRtyPassiveActivation (UM0701-02, 7.3.1)
+    if (!this->write_command_({PN532_COMMAND_RFCONFIGURATION, 0x05, 0xFF, 0x01, this->activation_retries_}) ||
+        !this->read_response(PN532_COMMAND_RFCONFIGURATION, response)) {
+      return false;
+    }
+    ESP_LOGD(TAG, "Passive activation retries set to %u", this->activation_retries_);
+  }
+  if (this->rx_gain_ != 0xFF) {
+    // CfgItem 0x0A: analog settings for 106 kbps type A. Values are the chip defaults (UM0701-02, 7.3.1) except
+    // CIU_RFCfg, whose bits 6..4 are RxGain and bits 3..0 RFLevelAmp (default 0x59 = RxGain 5 / 38 dB).
+    const uint8_t rf_cfg = static_cast<uint8_t>(((this->rx_gain_ & 0x07) << 4) | 0x09);
+    if (!this->write_command_({PN532_COMMAND_RFCONFIGURATION, 0x0A,
+                               rf_cfg,  // CIU_RFCfg
+                               0xF4,    // CIU_GsNOn
+                               0x3F,    // CIU_CWGsP
+                               0x11,    // CIU_ModGsP
+                               0x4D,    // CIU_DemodWhenRfOn
+                               0x85,    // CIU_RxThreshold
+                               0x61,    // CIU_DemodWhenRfOff
+                               0x6F,    // CIU_GsNOff
+                               0x26,    // CIU_ModWidth
+                               0x62,    // CIU_MifNFC
+                               0x87}) ||  // CIU_TxBitPhase
+        !this->read_response(PN532_COMMAND_RFCONFIGURATION, response)) {
+      return false;
+    }
+    ESP_LOGD(TAG, "RxGain code set to %u (CIU_RFCfg 0x%02X)", this->rx_gain_, rf_cfg);
+  }
+  return true;
+}
+
+bool PN532::same_uid_(const nfc::NfcTagUid &a, const nfc::NfcTagUid &b) {
+  if (a.size() != b.size())
+    return false;
+  for (size_t i = 0; i < a.size(); i++) {
+    if (a[i] != b[i])
+      return false;
+  }
+  return true;
+}
+
+void PN532::fire_removed_() {
+  if (this->current_uid_.empty())
+    return;
+#ifdef PN532_ON_TAG_REMOVED_TRIGGER_COUNT
+  auto tag = make_unique<nfc::NfcTag>(this->current_uid_);
+  for (auto *trigger : this->triggers_ontagremoved_)
+    trigger->process(tag);
+#endif
+  this->current_uid_ = {};
+}
+
+bool PN532::reactivate_(const nfc::NfcTagUid &uid) {
+  if (!this->write_command_({PN532_COMMAND_INLISTPASSIVETARGET, 0x01, 0x00}))
+    return false;
+  PN532Frame read;
+  if (!this->read_response(PN532_COMMAND_INLISTPASSIVETARGET, read))
+    return false;
+  if (read.size() < 6 || read[0] != 1)
+    return false;
+  const uint8_t len = read[5];
+  if (len == 0 || len > nfc::NFC_UID_MAX_LENGTH || read.size() < 6U + len)
+    return false;
+  nfc::NfcTagUid got(read.begin() + 6, read.begin() + 6 + len);
+  return same_uid_(got, uid);
 }
 
 bool PN532::powerdown() {
@@ -143,50 +217,50 @@ void PN532::loop() {
   }
 
   this->requested_read_ = false;
+  this->stat_polls_++;
+
+  // A poll that failed or found no tag counts as a miss. A present tag is only declared removed after
+  // removal_misses_ consecutive misses, so one RF glitch doesn't produce a removal + duplicate scan.
+  auto miss = [this](bool error) {
+    if (error)
+      this->stat_poll_errors_++;
+    if (this->miss_count_ < 255)
+      this->miss_count_++;
+    if (this->miss_count_ >= this->removal_misses_) {
+      this->fire_removed_();
+      this->pending_uid_ = {};
+      this->pending_attempts_ = 0;
+    }
+    this->turn_off_rf_();
+  };
 
   if (!success) {
-    // Something failed
-#ifdef PN532_ON_TAG_REMOVED_TRIGGER_COUNT
-    if (!this->current_uid_.empty()) {
-      auto tag = make_unique<nfc::NfcTag>(this->current_uid_);
-      for (auto *trigger : this->triggers_ontagremoved_)
-        trigger->process(tag);
-    }
-#endif
-    this->current_uid_ = {};
-    this->turn_off_rf_();
+    miss(true);
     return;
   }
 
   uint8_t num_targets = read.empty() ? 0 : read[0];
   if (num_targets != 1) {
     // no tags found or too many
-#ifdef PN532_ON_TAG_REMOVED_TRIGGER_COUNT
-    if (!this->current_uid_.empty()) {
-      auto tag = make_unique<nfc::NfcTag>(this->current_uid_);
-      for (auto *trigger : this->triggers_ontagremoved_)
-        trigger->process(tag);
-    }
-#endif
-    this->current_uid_ = {};
-    this->turn_off_rf_();
+    miss(false);
     return;
   }
 
   // target data for 106 kbps type A: NbTg, Tg, SENS_RES (2 bytes), SEL_RES, NFCIDLength, NFCID1 (UM0701-02, 7.3.5)
   if (read.size() < 6) {
-    this->turn_off_rf_();
+    miss(true);
     return;
   }
   const uint8_t sel_res = read[4];
   uint8_t nfcid_length = read[5];
   if (nfcid_length == 0 || nfcid_length > nfc::NFC_UID_MAX_LENGTH || read.size() < 6U + nfcid_length) {
     // oops, pn532 returned invalid data
-    this->turn_off_rf_();
+    miss(true);
     return;
   }
   nfc::NfcTagUid nfcid(read.begin() + 6, read.begin() + 6 + nfcid_length);
   const uint8_t tag_type = tag_type_from_sel_res(sel_res);
+  this->miss_count_ = 0;
 
   bool report = true;
 #ifdef PN532_BINARY_SENSOR_COUNT
@@ -197,18 +271,41 @@ void PN532::loop() {
   }
 #endif
 
-  if (nfcid.size() == this->current_uid_.size()) {
-    bool same_uid = true;
-    for (size_t i = 0; i < nfcid.size(); i++)
-      same_uid &= nfcid[i] == this->current_uid_[i];
-    if (same_uid)
-      return;
+  if (same_uid_(nfcid, this->current_uid_)) {
+    // already handled and still present
+    this->turn_off_rf_();
+    return;
+  }
+  if (!this->current_uid_.empty()) {
+    // a different tag replaced the handled one without an empty poll in between
+    this->fire_removed_();
+  }
+  if (!same_uid_(nfcid, this->pending_uid_)) {
+    this->pending_uid_ = nfcid;
+    this->pending_attempts_ = 0;
   }
 
-  this->current_uid_ = nfcid;
-
   if (next_task_ == READ) {
+    this->last_read_failed_ = false;
     auto tag = this->read_tag_(nfcid, tag_type);
+    this->pending_attempts_++;
+    if (this->last_read_failed_) {
+      this->stat_read_failures_++;
+      if (this->pending_attempts_ < this->read_attempts_) {
+        char uid_buf[nfc::FORMAT_UID_BUFFER_SIZE];
+        ESP_LOGW(TAG, "Read of '%s' failed (attempt %u/%u), retrying on next poll",
+                 nfc::format_uid_to(uid_buf, nfcid), this->pending_attempts_, this->read_attempts_);
+        this->turn_off_rf_();
+        return;
+      }
+      ESP_LOGW(TAG, "Read failed %u times; reporting tag without NDEF", this->pending_attempts_);
+    }
+    ESP_LOGI(TAG, "Tag handled after %u attempt(s) [polls=%u poll_errors=%u read_failures=%u page_retries=%u]",
+             this->pending_attempts_, this->stat_polls_, this->stat_poll_errors_, this->stat_read_failures_,
+             this->stat_page_retries_);
+    this->current_uid_ = nfcid;
+    this->pending_uid_ = {};
+    this->pending_attempts_ = 0;
 #ifdef PN532_ON_TAG_TRIGGER_COUNT
     for (auto *trigger : this->triggers_ontag_)
       trigger->process(tag);
