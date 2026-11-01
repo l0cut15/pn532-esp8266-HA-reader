@@ -7,7 +7,7 @@ ESPHome firmware for a **Wemos D1 Mini** (ESP8266) with a PN532 NFC module. Scan
 | Component | Details |
 |-----------|---------|
 | Microcontroller | Wemos D1 Mini (ESP8266) |
-| NFC module | PN532 in I2C mode |
+| NFC module | PN532 (red "NFC RFID Module V3") in I2C mode |
 | Status indicator | WS2812 NeoPixel |
 
 ### Wiring
@@ -16,10 +16,17 @@ ESPHome firmware for a **Wemos D1 Mini** (ESP8266) with a PN532 NFC module. Scan
 |-------|---------|
 | SDA | D2 (GPIO4) |
 | SCL | D1 (GPIO5) |
-| VCC | 3.3V |
+| VCC | 5V (the module has its own regulator) |
 | GND | GND |
 
 Set PN532 DIP switches: **switch 1 ON, switch 2 OFF** (I2C mode).
+
+### Reading distance
+
+A credit-card-sized tag reads reliably at about **5 cm** above the antenna. Held much closer (for example on a cover
+a few mm above the module), the card overcouples with the antenna and reads become unreliable. Design the enclosure
+so the tap surface sits roughly 4–5 cm above the PN532. Small stickers and key fobs couple more weakly and need to be
+closer.
 
 | NeoPixel | D1 Mini |
 |----------|---------|
@@ -62,7 +69,7 @@ esphome logs nfc-reader.yaml    # stream live logs
 |--------|---------|
 | White (dim, solid) | Connected and ready |
 | Green (1s flash) | Tag scanned — UUID sent to HA |
-| Red (1s flash) | Tag detected but no valid HA NDEF — re-scan |
+| Red (1s flash) | Tag detected but not read: no HA NDEF data, or every read attempt failed. Tap again. |
 | Off | Booting or not connected to HA |
 
 ## Tags
@@ -87,7 +94,7 @@ The device provides:
 - `esphome.tag_removed` events
 - **Write Tag Random** — writes a fresh HA UUID to a blank tag
 - **Clean Tag** / **Cancel Writing** buttons
-- Diagnostic sensors: status, IP address, connected SSID, ESPHome version
+- Diagnostic sensors: status, IP address, connected SSID, ESPHome version, plus tag event / HA scan / unreadable / removal counters and a "Last Tag Event" text sensor
 
 ### Automations
 
@@ -95,8 +102,9 @@ The device provides:
 
 ## Technical Notes
 
-- PN532 communicates over I2C at 100kHz for reliable MIFARE Ultralight NDEF reads
-- WiFi requires WPA2 minimum (`fast_connect` + `min_auth_mode: WPA2`)
+- Uses a fork of ESPHome's PN532 driver (`components/`, loaded via `external_components`). It re-selects the tag and retries failed reads, waits for several empty polls before deciding a tag was removed, polls every 250 ms, and has a fixed-tag bench mode. See `components/README.md`.
+- PN532 communicates over I2C at 100kHz
+- `fast_connect: true` also enforces WPA2 minimum auth on ESP8266
 - `homeassistant.tag_scanned` calls `tag.async_scan_tag()` internally — the same code path used by the official companion apps
 
 ## License
