@@ -38,6 +38,10 @@ esphome compile nfc-reader.yaml    # compile only (check for errors)
 
 `secrets.yaml` is required and not committed — copy from `secrets.yaml.template`.
 
+## Source of Truth
+
+The ESPHome Device Builder on Home Assistant (`hoas.local.zeroart.net`, config `nfc-reader.yaml`) holds the authoritative config. Edit it there (via the `esphome-device-builder` MCP tools), then mirror the result into the local `nfc-reader.yaml` so git tracks it. If the two differ, the server copy wins.
+
 ## Architecture
 
 ```
