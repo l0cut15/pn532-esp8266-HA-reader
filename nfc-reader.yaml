@@ -21,6 +21,18 @@ esp8266:
   board: d1_mini
 
 logger:
+  level: VERBOSE
+  logs:
+    # keep the NFC path verbose, quiet everything else back to DEBUG
+    wifi: DEBUG
+    api: DEBUG
+    api.service: DEBUG
+    sensor: DEBUG
+    text_sensor: DEBUG
+    light: DEBUG
+    component: DEBUG
+    scheduler: DEBUG
+    esphome.ota: DEBUG
 
 api:
   encryption:
@@ -60,17 +72,37 @@ light:
 globals:
   - id: tag_id
     type: std::string
+  # --- reliability instrumentation ---
+  - id: n_events      # on_tag fired
+    type: uint32_t
+    initial_value: '0'
+  - id: n_ha          # tag_scanned sent
+    type: uint32_t
+    initial_value: '0'
+  - id: n_nondef      # on_tag without HA NDEF
+    type: uint32_t
+    initial_value: '0'
+  - id: n_removed     # on_tag_removed fired
+    type: uint32_t
+    initial_value: '0'
+  - id: t_removed     # millis() at last removal
+    type: uint32_t
+    initial_value: '0'
+  - id: t_tag         # millis() at last on_tag
+    type: uint32_t
+    initial_value: '0'
 
 pn532_i2c:
   id: pn532_board
   on_tag:
     then:
-      - delay: 150ms
       - lambda: |-
           id(tag_id) = "";
+          int nrec = -1;
           if (tag.has_ndef_message()) {
             auto message = tag.get_ndef_message();
             auto &records = message->get_records();
+            nrec = records.size();
             for (auto &record : records) {
               std::string payload = record->get_payload();
               std::string type = record->get_type();
@@ -82,6 +114,23 @@ pn532_i2c:
               }
             }
           }
+          uint32_t now = millis();
+          id(n_events)++;
+          if (id(tag_id).empty()) id(n_nondef)++; else id(n_ha)++;
+          ESP_LOGI("nfcstat", "NFCSTAT ev=tag uid=%s type=%s ndef_records=%d result=%s since_removed_ms=%u since_tag_ms=%u events=%u ha=%u nondef=%u removed=%u",
+                   x.c_str(), tag.get_tag_type().c_str(), nrec,
+                   id(tag_id).empty() ? "nondef" : "ha",
+                   (unsigned) (now - id(t_removed)), (unsigned) (now - id(t_tag)),
+                   id(n_events), id(n_ha), id(n_nondef), id(n_removed));
+          id(t_tag) = now;
+          id(s_events).publish_state(id(n_events));
+          id(s_ha).publish_state(id(n_ha));
+          id(s_nondef).publish_state(id(n_nondef));
+          char buf[96];
+          snprintf(buf, sizeof(buf), "%s | %s | %ums", x.c_str(),
+                   id(tag_id).empty() ? "NO-NDEF" : id(tag_id).c_str(),
+                   (unsigned) (now - id(t_removed)));
+          id(s_last).publish_state(buf);
       - if:
           condition:
             lambda: 'return !id(tag_id).empty();'
@@ -110,7 +159,14 @@ pn532_i2c:
                 blue: 0%
   on_tag_removed:
     then:
-      - logger.log: "Tag removed"
+      - lambda: |-
+          uint32_t now = millis();
+          id(n_removed)++;
+          ESP_LOGI("nfcstat", "NFCSTAT ev=removed uid=%s held_ms=%u events=%u ha=%u nondef=%u removed=%u",
+                   x.c_str(), (unsigned) (now - id(t_tag)),
+                   id(n_events), id(n_ha), id(n_nondef), id(n_removed));
+          id(t_removed) = now;
+          id(s_removed).publish_state(id(n_removed));
       - homeassistant.event:
           event: esphome.tag_removed
 
@@ -161,12 +217,48 @@ button:
 
 # --- Diagnostic entities ---
 
+sensor:
+  - platform: template
+    id: s_events
+    name: "${friendly_name} Tag Events"
+    icon: mdi:counter
+    accuracy_decimals: 0
+    update_interval: never
+    entity_category: diagnostic
+  - platform: template
+    id: s_ha
+    name: "${friendly_name} HA Tag Scans"
+    icon: mdi:counter
+    accuracy_decimals: 0
+    update_interval: never
+    entity_category: diagnostic
+  - platform: template
+    id: s_nondef
+    name: "${friendly_name} Unreadable Reads"
+    icon: mdi:alert-circle-outline
+    accuracy_decimals: 0
+    update_interval: never
+    entity_category: diagnostic
+  - platform: template
+    id: s_removed
+    name: "${friendly_name} Tag Removals"
+    icon: mdi:counter
+    accuracy_decimals: 0
+    update_interval: never
+    entity_category: diagnostic
+
 binary_sensor:
   - platform: status
     name: "${friendly_name} Status"
     entity_category: diagnostic
 
 text_sensor:
+  - platform: template
+    id: s_last
+    name: "${friendly_name} Last Tag Event"
+    icon: mdi:nfc
+    update_interval: never
+    entity_category: diagnostic
   - platform: version
     hide_timestamp: true
     name: "${friendly_name} ESPHome Version"
