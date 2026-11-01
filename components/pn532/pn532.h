@@ -191,6 +191,9 @@ class PN532 : public PollingComponent {
   uint32_t stat_poll_errors_{0};
   uint32_t stat_read_failures_{0};
   uint32_t stat_page_retries_{0};
+  uint32_t stat_empty_{0};
+  uint32_t stat_busy_skips_{0};
+  uint32_t stat_last_log_{0};
   uint8_t rx_gain_{0xFF};
   uint8_t activation_retries_{0xFF};
   uint8_t removal_misses_{1};

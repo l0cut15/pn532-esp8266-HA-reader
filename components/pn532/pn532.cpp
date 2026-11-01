@@ -87,14 +87,14 @@ void PN532::setup() {
 
 bool PN532::configure_rf_() {
   PN532Frame response;
-  if (this->activation_retries_ != 0xFF) {
-    // CfgItem 0x05 MaxRetries: MxRtyATR, MxRtyPSL, MxRtyPassiveActivation (UM0701-02, 7.3.1)
-    if (!this->write_command_({PN532_COMMAND_RFCONFIGURATION, 0x05, 0xFF, 0x01, this->activation_retries_}) ||
-        !this->read_response(PN532_COMMAND_RFCONFIGURATION, response)) {
-      return false;
-    }
-    ESP_LOGD(TAG, "Passive activation retries set to %u", this->activation_retries_);
+  // The PN532 keeps RFConfiguration across ESP reboots/OTA (it is not power-cycled), so always write this item
+  // explicitly; 0xFF (retry forever) is the chip default.
+  // CfgItem 0x05 MaxRetries: MxRtyATR, MxRtyPSL, MxRtyPassiveActivation (UM0701-02, 7.3.1)
+  if (!this->write_command_({PN532_COMMAND_RFCONFIGURATION, 0x05, 0xFF, 0x01, this->activation_retries_}) ||
+      !this->read_response(PN532_COMMAND_RFCONFIGURATION, response)) {
+    return false;
   }
+  ESP_LOGD(TAG, "Passive activation retries set to %u", this->activation_retries_);
   if (this->rx_gain_ != 0xFF) {
     // CfgItem 0x0A: analog settings for 106 kbps type A. Values are the chip defaults (UM0701-02, 7.3.1) except
     // CIU_RFCfg, whose bits 6..4 are RxGain and bits 3..0 RFLevelAmp (default 0x59 = RxGain 5 / 38 dB).
@@ -141,11 +141,17 @@ void PN532::fire_removed_() {
 }
 
 bool PN532::reactivate_(const nfc::NfcTagUid &uid) {
+  // Power-cycle the tag: after an RF error it may sit in HALT, where it ignores the REQA that InListPassiveTarget
+  // sends. Dropping the field for a few ms resets it to IDLE so the re-select answers on the first try.
+  this->turn_off_rf_();
+  delay(5);
   if (!this->write_command_({PN532_COMMAND_INLISTPASSIVETARGET, 0x01, 0x00}))
     return false;
   PN532Frame read;
-  if (!this->read_response(PN532_COMMAND_INLISTPASSIVETARGET, read))
+  if (!this->read_response(PN532_COMMAND_INLISTPASSIVETARGET, read)) {
+    this->send_ack_();  // abort the still-running InListPassiveTarget
     return false;
+  }
   if (read.size() < 6 || read[0] != 1)
     return false;
   const uint8_t len = read[5];
@@ -180,6 +186,19 @@ bool PN532::powerdown() {
 void PN532::update() {
   if (!updates_enabled_)
     return;
+
+  const uint32_t now = millis();
+  if (now - this->stat_last_log_ >= 10000) {
+    this->stat_last_log_ = now;
+    ESP_LOGI(TAG, "stats: polls=%u empty=%u poll_errors=%u read_failures=%u page_retries=%u busy_skips=%u",
+             this->stat_polls_, this->stat_empty_, this->stat_poll_errors_, this->stat_read_failures_,
+             this->stat_page_retries_, this->stat_busy_skips_);
+  }
+  if (this->requested_read_) {
+    // previous InListPassiveTarget still outstanding
+    this->stat_busy_skips_++;
+    return;
+  }
 
 #ifdef PN532_BINARY_SENSOR_COUNT
   for (auto *obj : this->binary_sensors_)
@@ -242,6 +261,7 @@ void PN532::loop() {
   uint8_t num_targets = read.empty() ? 0 : read[0];
   if (num_targets != 1) {
     // no tags found or too many
+    this->stat_empty_++;
     miss(false);
     return;
   }
@@ -474,11 +494,17 @@ enum PN532ReadReady PN532::read_ready_(bool block) {
 
 void PN532::turn_off_rf_() {
   ESP_LOGV(TAG, "Turning RF field OFF");
-  this->write_command_({
-      PN532_COMMAND_RFCONFIGURATION,
-      0x01,  // RF Field
-      0x00,  // Off
-  });
+  if (!this->write_command_({
+          PN532_COMMAND_RFCONFIGURATION,
+          0x01,  // RF Field
+          0x00,  // Off
+      })) {
+    return;
+  }
+  // Upstream only read the ACK, leaving the RFConfiguration response frame queued in the PN532 where it could be
+  // picked up as the answer to the next command. Consume it so the next exchange starts clean.
+  PN532Frame response;
+  this->read_response(PN532_COMMAND_RFCONFIGURATION, response);
 }
 
 std::unique_ptr<nfc::NfcTag> PN532::read_tag_(nfc::NfcTagUid &uid, const uint8_t tag_type) {
