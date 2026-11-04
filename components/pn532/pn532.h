@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2019 ESPHome
+// Modified by Brett, 2026-11-01. Changes from ESPHome 2026.10.1 are listed in components/README.md.
+
 #pragma once
 
 #include "esphome/core/component.h"

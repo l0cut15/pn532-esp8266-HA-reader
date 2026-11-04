@@ -109,4 +109,4 @@ The device provides:
 
 ## License
 
-MIT
+MIT, except the C++ files in `components/`, which are GPL-3.0-only because they derive from ESPHome's GPLv3 C++ code. See [LICENSE](LICENSE).

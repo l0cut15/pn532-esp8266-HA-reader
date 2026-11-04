@@ -28,8 +28,8 @@ The HA server can't see `components/` when building from a local path. Day-to-da
 # one-time: Python 3.12+ venv with esphome==2026.10.1 (match the HA server version)
 uv venv -p 3.13 .venv && uv pip install -p .venv/bin/python esphome==2026.10.1 pyserial
 .venv/bin/esphome compile nfc-reader.yaml
-.venv/bin/esphome upload nfc-reader.yaml --device 10.10.11.198     # OTA
-.venv/bin/esphome -s bench_mode true run nfc-reader.yaml --device 10.10.11.198   # fixed-tag bench build
+.venv/bin/esphome upload nfc-reader.yaml --device nfc-reader.local     # OTA
+.venv/bin/esphome -s bench_mode true run nfc-reader.yaml --device nfc-reader.local   # fixed-tag bench build
 ```
 
 `secrets.yaml` is required and gitignored. Copy it from the HA server's `secrets.yaml` (MCP `get_config`), or from `secrets.yaml.template`.
@@ -40,7 +40,9 @@ uv venv -p 3.13 .venv && uv pip install -p .venv/bin/python esphome==2026.10.1 p
 
 ## Source of Truth
 
-The ESPHome Device Builder on Home Assistant (`hoas.local.zeroart.net`, config `nfc-reader.yaml`) holds the deployed config. The server copy pulls the driver fork from GitHub (`external_components: github://l0cut15/pn532-esp8266-HA-reader@<sha>`). The local copy uses `type: local` so iteration works without pushing. Otherwise the two should match. After changing either, mirror the change to the other and keep the pinned SHA current.
+The ESPHome Device Builder on Home Assistant (config `nfc-reader.yaml`) holds the deployed config. The server copy pulls the driver fork from GitHub (`external_components: github://l0cut15/pn532-esp8266-HA-reader@<tag>`). The local copy uses `type: local` so iteration works without pushing. Otherwise the two should match. After changing either, mirror the change to the other and keep the pinned tag current.
+
+Keep internal IP addresses and hostnames out of tracked files. They go in `CLAUDE.local.md`, which is gitignored.
 
 ## Architecture
 
@@ -49,6 +51,7 @@ nfc-reader.yaml          — ESPHome firmware (D1 Mini + PN532 I2C), diagnostics
 components/pn532/        — forked PN532 core (polling, presence state machine, retries, bench mode)
 components/pn532_i2c/    — forked I2C transport (desync warnings)
 secrets.yaml.template    — template for secrets.yaml (not committed)
+LICENSE, LICENSES/       — MIT, plus GPL-3.0-only for the C++ in components/
 ```
 
 **Data flow:**

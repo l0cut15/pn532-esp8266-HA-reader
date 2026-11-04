@@ -31,3 +31,6 @@ write/clean/read modes, `pn532.is_writing`), and every new option defaults to up
   ~7 mm) puts card taps in the too-close zone. Small stickers and fobs couple more weakly and will want a shorter
   distance.
 - Bench workflow: `esphome -s bench_mode true run nfc-reader.yaml`, tape the tag in place, then read the `BENCH` lines from the serial log.
+
+## License
+The `.cpp` and `.h` files here are derived from ESPHome's C++ code and stay under GPL-3.0-only. The `.py` files are derived from ESPHome's Python code and are under MIT. See `LICENSE` in the repository root.

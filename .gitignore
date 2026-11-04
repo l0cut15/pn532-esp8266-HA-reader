@@ -6,3 +6,4 @@ secrets.yaml
 .claude/
 .venv/
 __pycache__/
+CLAUDE.local.md
