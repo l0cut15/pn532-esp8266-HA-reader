@@ -1,0 +1,19 @@
+SPDX-License-Identifier: MIT AND GPL-3.0-only
+
+This project is under two licenses, matching the split in ESPHome, which its
+PN532 driver fork is derived from.
+
+GPL-3.0-only (full text: LICENSES/GPL-3.0-only.txt)
+  The C++ files in components/ (*.cpp, *.h).
+  Copyright (c) 2019 ESPHome, with modifications Copyright (c) 2026 Brett.
+  These files are derived from ESPHome's GPLv3 C++ code, so they cannot be
+  relicensed under MIT.
+
+MIT (full text: LICENSES/MIT.txt)
+  Everything else, including nfc-reader.yaml, the documentation and the Python
+  files in components/. Those Python files are derived from ESPHome's
+  MIT-licensed Python code.
+
+Firmware binaries built from this project include GPLv3 code. If you distribute
+a binary, the GPLv3 terms apply to it, including providing the corresponding
+source.
